@@ -405,8 +405,8 @@ class _freeze_time(object):
             ('real_strftime', real_strftime, 'FakeStrfTime', fake_strftime),
             ('real_time', real_time, 'FakeTime', fake_time),
         ]
-        real_names = tuple(real_name for real_name, real, fake_name, fake in to_patch)
-        self.fake_names = tuple(fake_name for real_name, real, fake_name, fake in to_patch)
+        real_names = frozenset(real_name for real_name, real, fake_name, fake in to_patch)
+        self.fake_names = frozenset(fake_name for real_name, real, fake_name, fake in to_patch)
         self.reals = dict((id(fake), real) for real_name, real, fake_name, fake in to_patch)
         fakes = dict((id(real), fake) for real_name, real, fake_name, fake in to_patch)
         add_change = self.undo_changes.append
@@ -417,24 +417,19 @@ class _freeze_time(object):
         with warnings.catch_warnings():
             warnings.filterwarnings('ignore')
 
-            for mod_name, module in list(sys.modules.items()):
+            for mod_name, module in sys.modules.iteritems():
                 if mod_name is None or module is None:
                     continue
                 elif mod_name.startswith(self.ignore) or mod_name.endswith('.six.moves'):
                     continue
                 elif (not hasattr(module, "__name__") or module.__name__ in ('datetime', 'time')):
                     continue
-                for module_attribute in dir(module):
+                for module_attribute, attribute_value in module.__dict__.iteritems():
                     if module_attribute in real_names:
                         continue
-                    try:
-                        attribute_value = getattr(module, module_attribute)
-                    except (ImportError, AttributeError, TypeError):
-                        # For certain libraries, this can result in ImportError(_winreg) or AttributeError (celery)
-                        continue
-                    fake = fakes.get(id(attribute_value))
-                    if fake:
-                        setattr(module, module_attribute, fake)
+                    attribute_id = id(attribute_value)
+                    if attribute_id in fakes:
+                        setattr(module, module_attribute, fakes[attribute_id])
                         add_change((module, module_attribute, attribute_value))
 
         datetime.datetime.times_to_freeze.append(time_to_freeze)
@@ -473,19 +468,12 @@ class _freeze_time(object):
                         continue
                     elif (not hasattr(module, "__name__") or module.__name__ in ('datetime', 'time')):
                         continue
-                    for module_attribute in dir(module):
-
+                    for module_attribute, attribute_value in module.__dict__.iteritems():
                         if module_attribute in self.fake_names:
                             continue
-                        try:
-                            attribute_value = getattr(module, module_attribute)
-                        except (ImportError, AttributeError, TypeError):
-                            # For certain libraries, this can result in ImportError(_winreg) or AttributeError (celery)
-                            continue
-
-                        real = self.reals.get(id(attribute_value))
-                        if real:
-                            setattr(module, module_attribute, real)
+                        attribute_id = id(attribute_value)
+                        if attribute_id in self.reals:
+                            setattr(module, module_attribute, self.reals[attribute_id])
 
         time.time = time.time.previous_time_function
         time.gmtime = time.gmtime.previous_gmtime_function
